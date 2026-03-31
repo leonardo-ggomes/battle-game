@@ -1,0 +1,46 @@
+{
+  "name": "shadow-kombat",
+  "version": "1.0.0",
+  "description": "Jogo de luta 2D arcade — Electron Kiosk para Raspberry Pi",
+  "main": "main.js",
+  "author": "Leonardo",
+  "license": "MIT",
+  "scripts": {
+    "setup":       "node setup.js",
+    "start":       "electron .",
+    "dev":         "electron . --inspect",
+    "build-linux": "electron-builder --linux",
+    "build-win":   "electron-builder --win",
+    "build-arm":   "electron-builder --linux --arm64"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "^29.0.0",
+    "electron-builder": "^24.9.1"
+  },
+  "build": {
+    "appId": "com.shadowkombat.arcade",
+    "productName": "Shadow Kombat",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "game.js",
+      "style.css",
+      "sprites/**/*"
+    ],
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Game"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "extraMetadata": {
+      "main": "main.js"
+    }
+  }
+}

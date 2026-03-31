@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>DEV KOMBAT</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
+    body > canvas {
+      display: block !important; position: fixed !important;
+      top: 0 !important; left: 0 !important;
+      width: 100vw !important; height: 100vh !important;
+      image-rendering: pixelated;
+    }
+    #err {
+      display: none; color: #f55; font: 15px monospace;
+      padding: 30px; white-space: pre-wrap; line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <div id="err"></div>
+
+  <script>
+    // ── Mostra erro visível na tela (Electron não tem barra de endereço) ──
+    window.onerror = function(msg, src, line, col, err) {
+      var d = document.getElementById('err');
+      d.style.display = 'block';
+      d.textContent = '❌ ERRO JAVASCRIPT\n' + msg + '\n' + src + ':' + line;
+    };
+
+    // ── Carrega script de forma sequencial e segura ──
+    function loadScript(src, cb, errCb) {
+      var s = document.createElement('script');
+      s.src = src;
+      s.onload  = cb  || function(){};
+      s.onerror = errCb || function(){
+        showErr('Falha ao carregar: ' + src);
+      };
+      document.body.appendChild(s);
+    }
+
+    function showErr(msg) {
+      var d = document.getElementById('err');
+      d.style.display = 'block';
+      d.textContent = '❌ ' + msg + '\n\nVerifique:\n' +
+        '• lib/p5.min.js existe?\n' +
+        '• game.js existe?\n' +
+        '• Abra DevTools (Ctrl+Shift+I) para detalhes';
+    }
+
+    function startGame() {
+      loadScript('game.js', null, function() {
+        showErr('game.js não encontrado ao lado do index.html');
+      });
+    }
+
+    // 1º tenta lib/p5.min.js (local — recomendado para Electron)
+    loadScript('lib/p5.min.js',
+      function() {
+        console.log('[P5] Carregado de lib/p5.min.js');
+        startGame();
+      },
+      function() {
+        // 2º fallback: CDN (só funciona com internet / allowRunningInsecureContent)
+        console.warn('[P5] lib/p5.min.js não encontrado — tentando CDN...');
+        loadScript(
+          'https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js',
+          function() {
+            console.log('[P5] Carregado via CDN');
+            startGame();
+          },
+          function() {
+            showErr(
+              'P5.js não pôde ser carregado!\n\n' +
+              'SOLUÇÃO:\n' +
+              '1. Baixe https://github.com/processing/p5.js/releases/download/v1.9.4/p5.min.js\n' +
+              '2. Salve como  lib/p5.min.js  na mesma pasta do index.html\n' +
+              '3. Execute npm start novamente'
+            );
+          }
+        );
+      }
+    );
+  </script>
+</body>
+</html>
