@@ -584,6 +584,24 @@ var _menuBGCanvas = null;
 // ── OPT: frameRate reduzido em menus (30 fps) e máximo em luta (60 fps) ──
 var _lastFightState = null;
 
+// ── Efeitos de ambiente da arena ────────────────────────────────
+// lightning: raio ativo (null = nenhum)
+// thunder  : contador de frames do flash de trovão
+// embers   : brasas/faíscas flutuantes (Vulcão)
+// iceShards: cristais caindo (Ruínas)
+var _amb = {
+  lightningTimer: 0,   // frames até próximo raio
+  lightning: null,     // { x1,y1, segs:[{x,y}], life, maxLife, col }
+  thunderFlash: 0,     // frames de clarão branco no céu
+  embers: [],          // partículas de brasa (stage VULCAO)
+  iceShards: [],       // cristais de gelo caindo (stage RUINAS)
+  smokeParticles: [],  // fumaça rasteira (stage TEMPLO)
+};
+
+// ── Efeitos especiais de combo ───────────────────────────────────
+// comboFX: lista de efeitos visuais ativos disparados por combo
+var _comboFX = [];  // { type, x, y, life, maxLife, col, combo, playerNum }
+
 // ── P5 Sketch ───────────────────────────────────────────────────
 new p5(function (p) {
 
@@ -1077,8 +1095,23 @@ new p5(function (p) {
 
       p.pop();
 
-      // Figura do personagem dentro da célula
-      drawCharFigure(ch, tx + THUMB * 0.5, ty + THUMB * 0.48, THUMB * 0.32);
+      // Figura do personagem dentro da célula — sprite real ou fallback geométrico
+      var idleSprite = sprites[ch.folder] && sprites[ch.folder]['Idle'];
+      var drawnSprite = false;
+      if (idleSprite && idleSprite.width > 10) {
+        p.push();
+        // Recorta o frame 0 do Idle.png e centraliza na célula
+        // O sprite é desenhado ocupando ~80% da altura da célula
+        var sprW = THUMB * 0.80;
+        var sprH = THUMB * 0.80;
+        var sprX = tx + (THUMB - sprW) * 0.5;
+        var sprY = ty + (THUMB - sprH) * 0.5 - 4; // leve offset pra cima
+        drawnSprite = drawSpriteFrame(idleSprite, 0, FRAME_W, FRAME_H, sprX, sprY, sprW, sprH);
+        p.pop();
+      }
+      if (!drawnSprite) {
+        drawCharFigure(ch, tx + THUMB * 0.5, ty + THUMB * 0.48, THUMB * 0.32);
+      }
 
       // Nome
       p.push(); p.noStroke(); p.textFont('monospace'); p.textAlign(p.CENTER, p.CENTER);
@@ -1284,73 +1317,115 @@ new p5(function (p) {
       ctx.fillStyle = botFade; ctx.fillRect(rx, ry + rh * 0.72, rw, rh * 0.28);
 
     } else {
-      // ── MODO PLACEHOLDER (sem imagem) ────────────────────
-      // Luz central
-      var lightX = isLeft ? rx + rw - 2 : rx + 2;
-      var lGrad = ctx.createLinearGradient(lightX - 60, 0, lightX + 60, 0);
-      lGrad.addColorStop(0, 'rgba(0,0,0,0)');
-      lGrad.addColorStop(0.5, 'rgba(' + acc[0] + ',' + acc[1] + ',' + acc[2] + ',0.06)');
-      lGrad.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = lGrad; ctx.fillRect(lightX - 60, ry, 120, rh);
+      // ── MODO SPRITE (sem portrait — usa frame do Idle.png) ───
+      var idleImg = sprites[ch.folder] && sprites[ch.folder]['Idle'];
 
-      // Figura geométrica
-      var figCX = isLeft ? rx + rw * 0.42 : rx + rw * 0.58;
-      var figCY = rh * 0.52;
-      var figH = rh * 0.78;
-      var bob = Math.sin(t * 0.04) * (figH * 0.006);
+      if (idleImg && idleImg.width > 10) {
+        // ── Frame do spritesheet escalado para ocupar o painel ─
+        // Mantém proporção quadrada do frame (FRAME_W × FRAME_H)
+        // e escala para preencher ~88% da altura do painel
+        var sprH = rh * 0.88;
+        var sprW = sprH; // frame é quadrado
+        // Posiciona levemente inclinado para o centro (como o portrait)
+        var sprOffX = isLeft ? rw * 0.08 : -rw * 0.08;
+        var sprX = rx + rw * 0.5 - sprW * 0.5 + sprOffX;
+        var sprY = ry + rh * 0.5 - sprH * 0.54; // levemente acima do centro
 
-      p.push(); p.noStroke(); p.fill(0, 0, 0, 45);
-      p.ellipse(figCX, rh * 0.86 + bob, figH * 0.38, figH * 0.04);
-      p.pop();
+        // Espelho para P2 (direita): flip horizontal via drawingContext
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(rx, ry, rw, rh);
+        ctx.clip();
 
-      p.push();
-      p.translate(figCX, figCY + bob);
-      if (!isLeft) p.scale(-1, 1);
-      p.noStroke();
-      var sc = figH / 220.0;
+        if (!isLeft) {
+          // Espelha horizontalmente ao redor do centro do sprite
+          ctx.translate(sprX + sprW, 0);
+          ctx.scale(-1, 1);
+          sprX = 0;
+        }
 
-      p.fill(col[0] * 0.65, col[1] * 0.65, col[2] * 0.65);
-      p.rect(-28 * sc, 30 * sc, 24 * sc, 62 * sc, 6 * sc); p.rect(6 * sc, 30 * sc, 24 * sc, 62 * sc, 6 * sc);
-      p.fill(col[0] * 0.35, col[1] * 0.35, col[2] * 0.35);
-      p.rect(-32 * sc, 82 * sc, 30 * sc, 18 * sc, 4 * sc); p.rect(4 * sc, 82 * sc, 30 * sc, 18 * sc, 4 * sc);
-      p.fill(col[0] * 0.5, col[1] * 0.5, col[2] * 0.5);
-      p.rect(-34 * sc, 18 * sc, 68 * sc, 16 * sc, 3 * sc);
-      p.fill(180, 140, 50); p.rect(-8 * sc, 21 * sc, 16 * sc, 10 * sc, 2 * sc);
-      p.fill(col[0], col[1], col[2]);
-      p.rect(-34 * sc, -26 * sc, 68 * sc, 50 * sc, 8 * sc);
-      p.fill(col[0] * 0.55, col[1] * 0.55, col[2] * 0.55);
-      p.rect(-18 * sc, -18 * sc, 36 * sc, 32 * sc, 5 * sc);
-      p.fill(acc[0] * 0.6, acc[1] * 0.6, acc[2] * 0.6);
-      p.ellipse(0, -4 * sc, 20 * sc, 20 * sc);
-      p.fill(col[0] * 0.85, col[1] * 0.85, col[2] * 0.85);
-      p.ellipse(-38 * sc, -22 * sc, 28 * sc, 28 * sc); p.ellipse(38 * sc, -22 * sc, 28 * sc, 28 * sc);
-      p.fill(180, 140, 50, 160);
-      p.ellipse(-38 * sc, -22 * sc, 12 * sc, 12 * sc); p.ellipse(38 * sc, -22 * sc, 12 * sc, 12 * sc);
-      p.fill(col[0] * 0.72, col[1] * 0.72, col[2] * 0.72);
-      p.rect(-58 * sc, -20 * sc, 22 * sc, 48 * sc, 6 * sc); p.rect(36 * sc, -20 * sc, 22 * sc, 48 * sc, 6 * sc);
-      p.fill(acc[0] * 0.65, acc[1] * 0.65, acc[2] * 0.65);
-      p.ellipse(-47 * sc, 30 * sc, 24 * sc, 24 * sc); p.ellipse(47 * sc, 30 * sc, 24 * sc, 24 * sc);
-      p.fill(acc[0] * 0.75, acc[1] * 0.75, acc[2] * 0.75);
-      p.rect(-10 * sc, -40 * sc, 20 * sc, 18 * sc, 3 * sc);
-      p.fill(acc[0] * 0.9, acc[1] * 0.9, acc[2] * 0.9);
-      p.ellipse(0, -66 * sc, 52 * sc, 56 * sc);
-      p.fill(col[0] * 0.28, col[1] * 0.28, col[2] * 0.28);
-      p.arc(0, -66 * sc, 52 * sc, 56 * sc, Math.PI, 0);
-      p.rect(-26 * sc, -66 * sc, 52 * sc, 14 * sc);
-      p.fill(col[0] * 0.15, col[1] * 0.15, col[2] * 0.15);
-      p.rect(-20 * sc, -72 * sc, 40 * sc, 20 * sc, 4 * sc);
-      p.fill(acc[0], acc[1], acc[2]);
-      p.ellipse(-10 * sc, -64 * sc, 10 * sc, 7 * sc); p.ellipse(10 * sc, -64 * sc, 10 * sc, 7 * sc);
-      p.fill(255, 255, 255, 180);
-      p.ellipse(-8 * sc, -66 * sc, 4 * sc, 3 * sc); p.ellipse(12 * sc, -66 * sc, 4 * sc, 3 * sc);
-      var aA = 18 + Math.abs(Math.sin(t * 0.04)) * 14;
-      p.noFill();
-      p.stroke(acc[0], acc[1], acc[2], aA);
-      p.strokeWeight(sc * 8); p.ellipse(0, 0, figH * 0.75, figH * 0.88);
-      p.strokeWeight(sc * 3); p.ellipse(0, 0, figH * 0.88, figH * 1.0);
-      p.pop();
+        // Recorta frame 0 do spritesheet e desenha escalado
+        var rawImg = idleImg.canvas || idleImg.elt || idleImg;
+        ctx.drawImage(rawImg, 0, 0, FRAME_W, FRAME_H, sprX, sprY, sprW, sprH);
 
-      // Fade borda externa
+        ctx.restore();
+
+        // Halo de luz colorida atrás do sprite (igual ao efeito do portrait)
+        var haloX = isLeft ? rx + rw * 0.42 : rx + rw * 0.58;
+        var haloGrad = ctx.createRadialGradient(haloX, ry + rh * 0.42, 0, haloX, ry + rh * 0.42, rw * 0.55);
+        haloGrad.addColorStop(0, 'rgba(' + acc[0] + ',' + acc[1] + ',' + acc[2] + ',0.13)');
+        haloGrad.addColorStop(0.5, 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',0.06)');
+        haloGrad.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = haloGrad;
+        ctx.fillRect(rx, ry, rw, rh);
+
+      } else {
+        // ── MODO PLACEHOLDER GEOMÉTRICO (nenhum asset disponível) ─
+        var lightX = isLeft ? rx + rw - 2 : rx + 2;
+        var lGrad = ctx.createLinearGradient(lightX - 60, 0, lightX + 60, 0);
+        lGrad.addColorStop(0, 'rgba(0,0,0,0)');
+        lGrad.addColorStop(0.5, 'rgba(' + acc[0] + ',' + acc[1] + ',' + acc[2] + ',0.06)');
+        lGrad.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = lGrad; ctx.fillRect(lightX - 60, ry, 120, rh);
+
+        var figCX = isLeft ? rx + rw * 0.42 : rx + rw * 0.58;
+        var figCY = rh * 0.52;
+        var figH = rh * 0.78;
+        var bob = Math.sin(t * 0.04) * (figH * 0.006);
+
+        p.push(); p.noStroke(); p.fill(0, 0, 0, 45);
+        p.ellipse(figCX, rh * 0.86 + bob, figH * 0.38, figH * 0.04);
+        p.pop();
+
+        p.push();
+        p.translate(figCX, figCY + bob);
+        if (!isLeft) p.scale(-1, 1);
+        p.noStroke();
+        var sc = figH / 220.0;
+
+        p.fill(col[0] * 0.65, col[1] * 0.65, col[2] * 0.65);
+        p.rect(-28 * sc, 30 * sc, 24 * sc, 62 * sc, 6 * sc); p.rect(6 * sc, 30 * sc, 24 * sc, 62 * sc, 6 * sc);
+        p.fill(col[0] * 0.35, col[1] * 0.35, col[2] * 0.35);
+        p.rect(-32 * sc, 82 * sc, 30 * sc, 18 * sc, 4 * sc); p.rect(4 * sc, 82 * sc, 30 * sc, 18 * sc, 4 * sc);
+        p.fill(col[0] * 0.5, col[1] * 0.5, col[2] * 0.5);
+        p.rect(-34 * sc, 18 * sc, 68 * sc, 16 * sc, 3 * sc);
+        p.fill(180, 140, 50); p.rect(-8 * sc, 21 * sc, 16 * sc, 10 * sc, 2 * sc);
+        p.fill(col[0], col[1], col[2]);
+        p.rect(-34 * sc, -26 * sc, 68 * sc, 50 * sc, 8 * sc);
+        p.fill(col[0] * 0.55, col[1] * 0.55, col[2] * 0.55);
+        p.rect(-18 * sc, -18 * sc, 36 * sc, 32 * sc, 5 * sc);
+        p.fill(acc[0] * 0.6, acc[1] * 0.6, acc[2] * 0.6);
+        p.ellipse(0, -4 * sc, 20 * sc, 20 * sc);
+        p.fill(col[0] * 0.85, col[1] * 0.85, col[2] * 0.85);
+        p.ellipse(-38 * sc, -22 * sc, 28 * sc, 28 * sc); p.ellipse(38 * sc, -22 * sc, 28 * sc, 28 * sc);
+        p.fill(180, 140, 50, 160);
+        p.ellipse(-38 * sc, -22 * sc, 12 * sc, 12 * sc); p.ellipse(38 * sc, -22 * sc, 12 * sc, 12 * sc);
+        p.fill(col[0] * 0.72, col[1] * 0.72, col[2] * 0.72);
+        p.rect(-58 * sc, -20 * sc, 22 * sc, 48 * sc, 6 * sc); p.rect(36 * sc, -20 * sc, 22 * sc, 48 * sc, 6 * sc);
+        p.fill(acc[0] * 0.65, acc[1] * 0.65, acc[2] * 0.65);
+        p.ellipse(-47 * sc, 30 * sc, 24 * sc, 24 * sc); p.ellipse(47 * sc, 30 * sc, 24 * sc, 24 * sc);
+        p.fill(acc[0] * 0.75, acc[1] * 0.75, acc[2] * 0.75);
+        p.rect(-10 * sc, -40 * sc, 20 * sc, 18 * sc, 3 * sc);
+        p.fill(acc[0] * 0.9, acc[1] * 0.9, acc[2] * 0.9);
+        p.ellipse(0, -66 * sc, 52 * sc, 56 * sc);
+        p.fill(col[0] * 0.28, col[1] * 0.28, col[2] * 0.28);
+        p.arc(0, -66 * sc, 52 * sc, 56 * sc, Math.PI, 0);
+        p.rect(-26 * sc, -66 * sc, 52 * sc, 14 * sc);
+        p.fill(col[0] * 0.15, col[1] * 0.15, col[2] * 0.15);
+        p.rect(-20 * sc, -72 * sc, 40 * sc, 20 * sc, 4 * sc);
+        p.fill(acc[0], acc[1], acc[2]);
+        p.ellipse(-10 * sc, -64 * sc, 10 * sc, 7 * sc); p.ellipse(10 * sc, -64 * sc, 10 * sc, 7 * sc);
+        p.fill(255, 255, 255, 180);
+        p.ellipse(-8 * sc, -66 * sc, 4 * sc, 3 * sc); p.ellipse(12 * sc, -66 * sc, 4 * sc, 3 * sc);
+        var aA = 18 + Math.abs(Math.sin(t * 0.04)) * 14;
+        p.noFill();
+        p.stroke(acc[0], acc[1], acc[2], aA);
+        p.strokeWeight(sc * 8); p.ellipse(0, 0, figH * 0.75, figH * 0.88);
+        p.strokeWeight(sc * 3); p.ellipse(0, 0, figH * 0.88, figH * 1.0);
+        p.pop();
+      }
+
+      // Fade borda externa — comum ao sprite e ao placeholder
       var fadeG;
       if (isLeft) {
         fadeG = ctx.createLinearGradient(rx, 0, rx + rw * 0.28, 0);
@@ -1360,6 +1435,17 @@ new p5(function (p) {
         fadeG.addColorStop(0, 'rgba(0,0,0,0)'); fadeG.addColorStop(1, 'rgba(0,0,0,0.92)');
       }
       ctx.fillStyle = fadeG; ctx.fillRect(rx, ry, rw, rh);
+
+      // Fade topo e rodapé — integra com a cena
+      var topFadeG = ctx.createLinearGradient(0, ry, 0, ry + rh * 0.18);
+      topFadeG.addColorStop(0, 'rgba(0,0,0,0.85)');
+      topFadeG.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = topFadeG; ctx.fillRect(rx, ry, rw, rh * 0.18);
+
+      var botFadeG = ctx.createLinearGradient(0, ry + rh * 0.72, 0, ry + rh);
+      botFadeG.addColorStop(0, 'rgba(0,0,0,0)');
+      botFadeG.addColorStop(1, 'rgba(0,0,0,0.88)');
+      ctx.fillStyle = botFadeG; ctx.fillRect(rx, ry + rh * 0.72, rw, rh * 0.28);
     }
   }
 
@@ -1794,6 +1880,14 @@ new p5(function (p) {
     roundTimer = 99; roundTimerRaw = 0;
     roundOver = false; roundWinner = null; roundOverTimer = 0;
     hitEffects = []; particles = []; screenShake = 0;
+    // Reseta efeitos de ambiente e combo
+    _amb.lightningTimer = 60;
+    _amb.lightning = null;
+    _amb.thunderFlash = 0;
+    _amb.embers = [];
+    _amb.iceShards = [];
+    _amb.smokeParticles = [];
+    _comboFX = [];
     STATE = 'FIGHT';
     SFX.stopMenuMusic();                                          
     // Som de início de round com pequeno delay (deixa o fade terminar)
@@ -1815,6 +1909,7 @@ new p5(function (p) {
     p.push(); p.translate(sx, sy);
 
     drawStageBG();
+    updateAmbientFX();
 
     if (!roundOver) {
       updateFighter(fighter1, fighter2, 0);
@@ -1825,6 +1920,7 @@ new p5(function (p) {
     drawFighterShadow(fighter1); drawFighterShadow(fighter2);
     drawFighterSprite(fighter2); drawFighterSprite(fighter1);
     drawHitEffects();
+    drawComboFX();
     p.pop();
 
     drawHUD();
@@ -2752,6 +2848,375 @@ new p5(function (p) {
     p.pop();
   }
 
+  // ════════════════════════════════════════════════════════════
+  //  EFEITOS DE AMBIENTE — raios, trovões, brasas, cristais, fumaça
+  //  Chamado em drawFight() logo após drawStageBG()
+  // ════════════════════════════════════════════════════════════
+  function updateAmbientFX() {
+    var st = selectedStage || STAGES[0];
+    var ctx = p.drawingContext;
+    var t = p.frameCount;
+
+    // ── Determina "clima" do stage ──────────────────────────
+    // 0=TEMPLO(sombra/raios roxos), 1=ARENA(raios alaranjados),
+    // 2=RUINAS(raios azuis+cristais), 3=VULCAO(brasas)
+    var sid = st.id;
+    var acR = st.accent[0], acG = st.accent[1], acB = st.accent[2];
+
+    // ── Flash de trovão — clarão no céu ──────────────────────
+    if (_amb.thunderFlash > 0) {
+      var flashAlpha = (_amb.thunderFlash / 10) * 80;
+      ctx.fillStyle = 'rgba(' + acR + ',' + acG + ',' + acB + ',' + (flashAlpha / 255) + ')';
+      ctx.fillRect(0, 0, CANVAS_W, GROUND_Y * 0.85);
+      _amb.thunderFlash--;
+    }
+
+    // ── Raio ─────────────────────────────────────────────────
+    _amb.lightningTimer--;
+    if (_amb.lightningTimer <= 0) {
+      // Intervalo aleatório: 2-6 segundos (60fps)
+      _amb.lightningTimer = 120 + Math.floor(Math.random() * 240);
+
+      // Gera raio ziguezague do céu até o horizonte
+      var lx = CANVAS_W * (0.15 + Math.random() * 0.7);
+      var segs = [];
+      var cx2 = lx, cy2 = 0;
+      var branches = [];
+      while (cy2 < GROUND_Y * 0.82) {
+        var step = 28 + Math.random() * 40;
+        var jitter = (Math.random() - 0.5) * 80;
+        cx2 += jitter; cy2 += step;
+        cx2 = Math.max(20, Math.min(CANVAS_W - 20, cx2));
+        segs.push({ x: cx2, y: cy2 });
+        // Ramificação aleatória
+        if (Math.random() < 0.28 && cy2 < GROUND_Y * 0.6) {
+          var bx = cx2, by = cy2;
+          var bsegs = [];
+          for (var bi = 0; bi < 3 + Math.floor(Math.random() * 3); bi++) {
+            bx += (Math.random() - 0.5) * 70 + (Math.random() > 0.5 ? 18 : -18);
+            by += 22 + Math.random() * 30;
+            bsegs.push({ x: bx, y: by });
+          }
+          branches.push(bsegs);
+        }
+      }
+      _amb.lightning = {
+        x1: lx, y1: 0,
+        segs: segs,
+        branches: branches || [],
+        life: 18, maxLife: 18,
+        col: [acR, acG, acB],
+      };
+      _amb.thunderFlash = 10;
+      // Som procedural de trovão (burst de ruído grave)
+      SFX._thunderSound && SFX._thunderSound();
+    }
+
+    // Desenha raio ativo
+    if (_amb.lightning) {
+      var lr = _amb.lightning;
+      lr.life--;
+      if (lr.life <= 0) { _amb.lightning = null; }
+      else {
+        var la = (lr.life / lr.maxLife);
+        var lw = la * 3.5;
+        ctx.save();
+        ctx.globalAlpha = la * 0.9;
+        ctx.strokeStyle = 'rgba(255,255,255,1)';
+        ctx.lineWidth = lw;
+        ctx.shadowColor = 'rgb(' + lr.col[0] + ',' + lr.col[1] + ',' + lr.col[2] + ')';
+        ctx.shadowBlur = 18 * la;
+        ctx.beginPath();
+        ctx.moveTo(lr.x1, lr.y1);
+        for (var si = 0; si < lr.segs.length; si++) {
+          ctx.lineTo(lr.segs[si].x, lr.segs[si].y);
+        }
+        ctx.stroke();
+        // Ramificações — mais finas
+        ctx.lineWidth = lw * 0.45;
+        ctx.globalAlpha = la * 0.55;
+        for (var bi2 = 0; bi2 < lr.branches.length; bi2++) {
+          var bsegs2 = lr.branches[bi2];
+          if (!bsegs2.length) continue;
+          // encontra ponto de origem na segs
+          var oriIdx = Math.floor(bi2 * lr.segs.length / Math.max(1, lr.branches.length));
+          var ori = lr.segs[Math.min(oriIdx, lr.segs.length - 1)];
+          ctx.beginPath();
+          ctx.moveTo(ori.x, ori.y);
+          for (var bk = 0; bk < bsegs2.length; bk++) ctx.lineTo(bsegs2[bk].x, bsegs2[bk].y);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+
+    // ── Efeitos por tipo de stage ────────────────────────────
+    if (sid === 3) {
+      // VULCÃO — brasas subindo
+      if (t % 3 === 0 && _amb.embers.length < 60) {
+        _amb.embers.push({
+          x: Math.random() * CANVAS_W,
+          y: GROUND_Y + Math.random() * 60,
+          vx: (Math.random() - 0.5) * 1.2,
+          vy: -(1.2 + Math.random() * 2.2),
+          size: 1.5 + Math.random() * 3,
+          life: 80 + Math.floor(Math.random() * 60),
+          maxLife: 140,
+          r: 255, g: 80 + Math.floor(Math.random() * 120), b: 0,
+        });
+      }
+      p.push(); p.noStroke();
+      for (var ei = _amb.embers.length - 1; ei >= 0; ei--) {
+        var em = _amb.embers[ei];
+        em.x += em.vx + Math.sin(t * 0.04 + ei) * 0.4;
+        em.y += em.vy;
+        em.life--;
+        if (em.life <= 0 || em.y < -20) { _amb.embers.splice(ei, 1); continue; }
+        var ea = (em.life / em.maxLife);
+        p.fill(em.r, em.g, em.b, ea * 200);
+        p.ellipse(em.x, em.y, em.size, em.size);
+      }
+      p.pop();
+
+    } else if (sid === 2) {
+      // RUÍNAS GELADAS — cristais/neve caindo
+      if (t % 4 === 0 && _amb.iceShards.length < 50) {
+        _amb.iceShards.push({
+          x: Math.random() * CANVAS_W,
+          y: -10,
+          vx: (Math.random() - 0.5) * 0.6,
+          vy: 1.0 + Math.random() * 1.8,
+          size: 1 + Math.random() * 2.5,
+          life: 200,
+          maxLife: 200,
+        });
+      }
+      p.push(); p.noStroke();
+      for (var ii = _amb.iceShards.length - 1; ii >= 0; ii--) {
+        var ic = _amb.iceShards[ii];
+        ic.x += ic.vx + Math.sin(t * 0.02 + ii * 0.7) * 0.3;
+        ic.y += ic.vy;
+        ic.life--;
+        if (ic.life <= 0 || ic.y > CANVAS_H + 10) { _amb.iceShards.splice(ii, 1); continue; }
+        var ia = Math.min(1, ic.life / 40) * 0.75;
+        p.fill(180, 220, 255, ia * 200);
+        p.ellipse(ic.x, ic.y, ic.size, ic.size);
+      }
+      p.pop();
+
+    } else if (sid === 0) {
+      // TEMPLO DAS SOMBRAS — fumaça rasteira no chão
+      if (t % 5 === 0 && _amb.smokeParticles.length < 30) {
+        _amb.smokeParticles.push({
+          x: Math.random() * CANVAS_W,
+          y: GROUND_Y + Math.random() * 30,
+          vx: (Math.random() - 0.5) * 0.5,
+          vy: -(0.2 + Math.random() * 0.4),
+          size: 30 + Math.random() * 60,
+          life: 120 + Math.floor(Math.random() * 80),
+          maxLife: 200,
+        });
+      }
+      p.push(); p.noStroke();
+      for (var smi = _amb.smokeParticles.length - 1; smi >= 0; smi--) {
+        var sm = _amb.smokeParticles[smi];
+        sm.x += sm.vx;
+        sm.y += sm.vy;
+        sm.size += 0.4;
+        sm.life--;
+        if (sm.life <= 0) { _amb.smokeParticles.splice(smi, 1); continue; }
+        var sma = (sm.life / sm.maxLife) * 0.13;
+        p.fill(acR * 0.4, acG * 0.4, acB * 0.4, sma * 255);
+        p.ellipse(sm.x, sm.y, sm.size, sm.size * 0.35);
+      }
+      p.pop();
+    }
+    // ARENA DO CAOS (sid=1) — só raios, sem efeito extra
+  }
+
+  // ════════════════════════════════════════════════════════════
+  //  EFEITOS ESPECIAIS DE COMBO
+  //  Chamado em dealDamage() e desenhado em drawFight()
+  // ════════════════════════════════════════════════════════════
+  function spawnComboFX(attacker) {
+    var combo = attacker.combo;
+    if (combo < 3) return; // só dispara a partir de 3x
+
+    var st = selectedStage || STAGES[0];
+    var col = attacker.charData ? attacker.charData.acc : [255, 200, 0];
+    var x = attacker.x;
+    var y = attacker.y - 80;
+
+    if (combo >= 7) {
+      // ── ULTRA COMBO (7x+) — explosão de partículas + onda de choque ──
+      _comboFX.push({ type: 'ultra', x: x, y: y, life: 55, maxLife: 55, col: col, combo: combo, pNum: attacker.playerNum });
+      // Spawn rajada de partículas
+      for (var i = 0; i < 28; i++) {
+        var ang = (i / 28) * Math.PI * 2;
+        var spd = 4 + Math.random() * 7;
+        _comboFX.push({
+          type: 'particle',
+          x: x, y: y,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd - 3,
+          life: 35 + Math.floor(Math.random() * 20),
+          maxLife: 55,
+          col: col,
+          size: 4 + Math.random() * 6,
+        });
+      }
+      screenShake = Math.max(screenShake, 12);
+    } else if (combo >= 5) {
+      // ── MEGA COMBO (5-6x) — anel de energia + raios ──
+      _comboFX.push({ type: 'ring', x: x, y: y, life: 38, maxLife: 38, col: col, combo: combo });
+      for (var j = 0; j < 14; j++) {
+        var ang2 = (j / 14) * Math.PI * 2;
+        var spd2 = 2.5 + Math.random() * 4.5;
+        _comboFX.push({
+          type: 'particle',
+          x: x, y: y,
+          vx: Math.cos(ang2) * spd2,
+          vy: Math.sin(ang2) * spd2 - 2,
+          life: 25 + Math.floor(Math.random() * 15),
+          maxLife: 40,
+          col: col,
+          size: 3 + Math.random() * 4,
+        });
+      }
+      screenShake = Math.max(screenShake, 7);
+    } else if (combo >= 3) {
+      // ── COMBO (3-4x) — estrela de luz ──
+      _comboFX.push({ type: 'burst', x: x, y: y, life: 25, maxLife: 25, col: col, combo: combo });
+      for (var k = 0; k < 8; k++) {
+        var ang3 = (k / 8) * Math.PI * 2;
+        _comboFX.push({
+          type: 'particle',
+          x: x, y: y,
+          vx: Math.cos(ang3) * (1.5 + Math.random() * 3),
+          vy: Math.sin(ang3) * (1.5 + Math.random() * 3) - 1.5,
+          life: 18 + Math.floor(Math.random() * 10),
+          maxLife: 28,
+          col: col,
+          size: 2 + Math.random() * 3,
+        });
+      }
+    }
+  }
+
+  function drawComboFX() {
+    if (_comboFX.length === 0) return;
+    var ctx = p.drawingContext;
+    p.push();
+
+    for (var i = _comboFX.length - 1; i >= 0; i--) {
+      var fx = _comboFX[i];
+      fx.life--;
+      if (fx.life <= 0) { _comboFX.splice(i, 1); continue; }
+      var prog = 1 - fx.life / fx.maxLife;
+      var al = fx.life / fx.maxLife;
+      var r = fx.col[0], g = fx.col[1], b = fx.col[2];
+
+      if (fx.type === 'particle') {
+        fx.x += fx.vx; fx.y += fx.vy;
+        fx.vy += 0.18; // gravidade leve
+        p.noStroke();
+        p.fill(r, g, b, al * 220);
+        p.ellipse(fx.x, fx.y, fx.size * al + 1, fx.size * al + 1);
+
+      } else if (fx.type === 'burst') {
+        // Estrela de raios — 8 linhas saindo do centro
+        var radius = prog * 80;
+        ctx.save();
+        ctx.globalAlpha = al * 0.85;
+        ctx.strokeStyle = 'rgb(' + r + ',' + g + ',' + b + ')';
+        ctx.shadowColor = 'rgb(' + r + ',' + g + ',' + b + ')';
+        ctx.shadowBlur = 10;
+        for (var ri = 0; ri < 8; ri++) {
+          var ang = (ri / 8) * Math.PI * 2;
+          var inner = radius * 0.25;
+          ctx.lineWidth = 2.5 * al;
+          ctx.beginPath();
+          ctx.moveTo(fx.x + Math.cos(ang) * inner, fx.y + Math.sin(ang) * inner);
+          ctx.lineTo(fx.x + Math.cos(ang) * radius, fx.y + Math.sin(ang) * radius);
+          ctx.stroke();
+        }
+        // Texto do combo
+        ctx.globalAlpha = al;
+        ctx.fillStyle = 'rgb(' + r + ',' + g + ',' + b + ')';
+        ctx.font = 'bold ' + Math.floor(22 + prog * 8) + 'px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(fx.combo + 'x COMBO', fx.x, fx.y - 30 - prog * 20);
+        ctx.restore();
+
+      } else if (fx.type === 'ring') {
+        // Anel de energia expandindo
+        var rRad = prog * 140;
+        ctx.save();
+        ctx.globalAlpha = al * 0.9;
+        ctx.strokeStyle = 'rgb(' + r + ',' + g + ',' + b + ')';
+        ctx.shadowColor = 'rgb(' + r + ',' + g + ',' + b + ')';
+        ctx.shadowBlur = 20;
+        ctx.lineWidth = (1 - prog) * 8 + 1;
+        ctx.beginPath();
+        ctx.arc(fx.x, fx.y, rRad, 0, Math.PI * 2);
+        ctx.stroke();
+        // Segundo anel defasado
+        ctx.lineWidth = (1 - prog) * 4;
+        ctx.globalAlpha = al * 0.4;
+        ctx.beginPath();
+        ctx.arc(fx.x, fx.y, rRad * 0.7, 0, Math.PI * 2);
+        ctx.stroke();
+        // Texto grande
+        ctx.globalAlpha = al;
+        ctx.fillStyle = 'rgb(255,255,255)';
+        ctx.shadowColor = 'rgb(' + r + ',' + g + ',' + b + ')';
+        ctx.shadowBlur = 14;
+        ctx.font = 'bold ' + Math.floor(28 + prog * 10) + 'px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(fx.combo + 'x COMBO!', fx.x, fx.y - 40 - prog * 25);
+        ctx.restore();
+
+      } else if (fx.type === 'ultra') {
+        // Onda de choque dupla + texto épico
+        var uRad = prog * 220;
+        ctx.save();
+        // Onda exterior
+        ctx.globalAlpha = al * 0.75;
+        ctx.strokeStyle = 'rgb(255,255,255)';
+        ctx.shadowColor = 'rgb(' + r + ',' + g + ',' + b + ')';
+        ctx.shadowBlur = 30;
+        ctx.lineWidth = (1 - prog) * 12 + 1;
+        ctx.beginPath();
+        ctx.arc(fx.x, fx.y, uRad, 0, Math.PI * 2);
+        ctx.stroke();
+        // Onda interior colorida
+        ctx.strokeStyle = 'rgb(' + r + ',' + g + ',' + b + ')';
+        ctx.lineWidth = (1 - prog) * 6;
+        ctx.globalAlpha = al * 0.55;
+        ctx.beginPath();
+        ctx.arc(fx.x, fx.y, uRad * 0.6, 0, Math.PI * 2);
+        ctx.stroke();
+        // Flash central
+        if (prog < 0.2) {
+          ctx.globalAlpha = (0.2 - prog) / 0.2 * 0.5;
+          ctx.fillStyle = 'rgb(255,255,255)';
+          ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+        }
+        // Texto ULTRA pulsante
+        var pulse = 1 + Math.sin(fx.life * 0.4) * 0.08;
+        ctx.globalAlpha = al;
+        ctx.fillStyle = 'rgb(' + r + ',' + g + ',' + b + ')';
+        ctx.shadowColor = 'rgb(255,255,255)';
+        ctx.shadowBlur = 18;
+        ctx.font = 'bold ' + Math.floor((36 + prog * 14) * pulse) + 'px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('ULTRA  ' + fx.combo + 'x!!', fx.x, fx.y - 55 - prog * 30);
+        ctx.restore();
+      }
+    }
+    p.pop();
+  }
+
   function drawFighterShadow(f) {
     if (!f) return;
     var scl = 1 - (GROUND_Y - f.y) / GROUND_Y * 0.3;
@@ -3132,6 +3597,7 @@ new p5(function (p) {
       if (isCrit) SFX.crit(); else SFX.hit();
       attacker.combo = (attacker.combo || 0) + 1;
       attacker.comboTimer = 90;
+      spawnComboFX(attacker);
       if (target.hp <= 0) {
         target.hp = 0; setState(target, 'DEAD');
         SFX.dead();
@@ -3198,6 +3664,26 @@ new p5(function (p) {
     p.pop();
   }
 
+  // ── Recorta e desenha um frame de spritesheet ────────────────
+  // img     : p5.Image do spritesheet (frames lado a lado)
+  // frameIdx: índice do frame (0 = primeiro)
+  // fw/fh   : largura/altura de cada frame no spritesheet (FRAME_W / FRAME_H)
+  // dx/dy   : posição de destino (canto superior esquerdo)
+  // dw/dh   : tamanho de destino (escala o frame)
+  function drawSpriteFrame(img, frameIdx, fw, fh, dx, dy, dw, dh) {
+    if (!img || img.width < 2) return false;
+    var sx = frameIdx * fw;
+    var sy = 0;
+    // Garante que o frame existe no spritesheet
+    if (sx + fw > img.width) sx = 0;
+    p.drawingContext.drawImage(
+      img.canvas || img.elt || img,
+      sx, sy, fw, fh,   // source rect
+      dx, dy, dw, dh    // dest rect
+    );
+    return true;
+  }
+
   // cx = centro horizontal do painel
   function drawPlayerPanel(cx, y, pNum, charIdx, ready) {
     charIdx = safeIdx(charIdx);
@@ -3211,8 +3697,13 @@ new p5(function (p) {
     p.stroke(pcol[0], pcol[1], pcol[2]); p.strokeWeight(1.5);
     p.rect(px, y, w, h, 8);
     p.noStroke();
-    // Figura à esquerda
-    drawCharFigure(ch, px + 30, y + 36, 28);
+    // Figura à esquerda — sprite real ou fallback geométrico
+    var idleSpr = sprites[ch.folder] && sprites[ch.folder]['Idle'];
+    var sprSize = 52; // tamanho do sprite no painel (px)
+    if (!idleSpr || !drawSpriteFrame(idleSpr, 0, FRAME_W, FRAME_H,
+        px + 4, y + (h - sprSize) * 0.5, sprSize, sprSize)) {
+      drawCharFigure(ch, px + 30, y + 36, 28);
+    }
     // Texto à direita da figura
     p.fill(255); p.textFont('monospace'); p.textStyle(p.BOLD);
     p.textSize(12); p.textAlign(p.LEFT, p.CENTER);
